@@ -10,12 +10,9 @@ bool right_already_on = false;
 bool left_already_off = false;
 bool right_already_off = false;
 
-
-
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
 MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
-
 
 // enable LCD (for debugging)
 #define _LCD_TYPE 1
@@ -87,7 +84,7 @@ void setup() {
     pinMode(left_pin, OUTPUT);
     
     // enable serial port output
-    Serial.begin(115200);
+    //Serial.begin(115200);
 
     if(enableLCD){
         // LCD display will be used for debugging
@@ -97,24 +94,43 @@ void setup() {
 
     while (CAN_OK != CAN.begin(CAN_500KBPS, MCP_8MHz))              // init can bus : baudrate = 500k
     {
-        Serial.println("CAN BUS Shield init fail");
+/*        Serial.println("CAN BUS Shield init fail");
         Serial.println("Init CAN BUS Shield again");
         delay(100);
+*/
         if(enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init FAILED"); }
     }
-    Serial.println("CAN shield init ok!");
-    //if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); }
+/*    Serial.println("CAN shield init ok!"); */
+    if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); }
+
+    /* Now I'll try to init CAN message masks and filters
+     *  CAN message ID is 11 bits long, full 11-bit mask is 0x7FF.
+     *  Note: CAN ID 0x076 is 00001110110
+     *  For now it is the only message I am using.
+     */
+
+    CAN.init_Mask(0, false, 0x76);
+    CAN.init_Mask(1, false, 0x76);
+
+    CAN.init_Filt(0, false, 0x76);
+    CAN.init_Filt(1, false, 0x76);
+    CAN.init_Filt(2, false, 0x76);
+    CAN.init_Filt(3, false, 0x76);
+    CAN.init_Filt(4, false, 0x76);
+    CAN.init_Filt(5, false, 0x76);
+
 }
 
 void loop() {
-    byte zero_byte;
-    byte second_byte;
-    byte sixth_byte;
-    // for Steering Wheel angle
-    unsigned short swAngleMessage;
-    int SW_ANGLE = 0;
-    bool SW_ROTATION = 0;
-    bool WHEELS_DIR = 0;
+    static byte sixth_byte;
+    // where to assemble Steering Wheel angle from 14-bit message
+    static short swAngleMessage;
+    static short SW_ANGLE;
+    static short SW_ANGLE_PREVIOUS;
+    short ANGLE_DIFF;
+    static short ANGLE_DIFF_ABS;
+    static bool SW_ROTATION;
+    static bool WHEELS_DIR;
 
     // try to receive CAN messages and show them in Serial port
     unsigned char len = 0;
@@ -125,58 +141,65 @@ void loop() {
     {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
         unsigned long canId = CAN.getCanId();
+/*
         Serial.print("len "); Serial.print(len);
         Serial.print(" ID 0x");
         Serial.print(canId, HEX);
         Serial.print(": ");
+*/
+        analogWrite(left_pin, 0); // dark if another message received
+        if (canId == 0x076){ // filter CAN message flow for the message I am interested in
+            analogWrite(left_pin, 255); // light up if message with CAN ID 0x76 received
 
-        /*
-        if (canId == 0x076){
-            analogWrite(left, Message);
-            analogWrite(right, Message);
-        }
-        */
-    // getting the direction where wheels are pointing at, left=0 right=1
-        WHEELS_DIR = buf[0] & 0x40; // grab bit 1
-    // getting rotation direction of the steering wheel
-        SW_ROTATION = buf[2] & 0x80; // grab bit 0
+            // getting the direction where wheels are pointing at, left=0 right=1
+            WHEELS_DIR = buf[0] & 0x40; // grab bit 1 from byte 0
 
-    // getting the steering wheel angle
-        /* I must cut off first two bits of 6th (7th if counting from 1) byte of message with CAN ID 0x076
-            in order to get 14-bit value of steering angle from bytes 6 and 7.
-            That is why there is this mask 0x3f, it is 00111111 in binary,
-            ones means "copy this bit", zeroes mean "ignore"
-        */
-        sixth_byte = buf[6] & 0x3F;
-        swAngleMessage = word(sixth_byte,byte(buf[7]));
-        SW_ANGLE = swAngleMessage * 0.04395;
-        // also print message ID on the display
+            // getting rotation direction of the steering wheel
+            SW_ROTATION = buf[2] & 0x80; // grab bit 0 from byte 2
+
+            // getting the steering wheel angle
+            /* I must cut off first two bits of 6th (7th if counting from 1) byte of message with CAN ID 0x076
+                in order to get 14-bit value of steering angle from bytes 6 and 7.
+                That is why there is this mask 0x3f, it is 00111111 in binary,
+                ones means "copy this bit", zeroes mean "ignore" */
+            sixth_byte = buf[6] & 0x3F;
+            swAngleMessage = word(sixth_byte,buf[7]);
+            SW_ANGLE = swAngleMessage * 0.04395;
+
+            /* Try to at least see previous angle value
+             *  probably will use for smoothing out angle */
+            ANGLE_DIFF = SW_ANGLE - SW_ANGLE_PREVIOUS;
+            ANGLE_DIFF_ABS = abs(ANGLE_DIFF);
+
+        }   // end filtering for 0x076 message
+
         if(enableLCD){ 
+            // print angle
             lcd.setCursor(0, 0);
-            //lcd.print("CAN ID 0x");
-            //lcd.print(canId, HEX);
-            /*lcd.print(buf[6],BIN);
-            lcd.print("                ");
-            lcd.setCursor(0, 1);
-            lcd.print(sixth,BIN);
-            lcd.print("                "); */
             lcd.print(String(SW_ANGLE));
-            lcd.print("°|W:");
-            if (WHEELS_DIR == true){
-                lcd.print("R");
-            } else if (WHEELS_DIR == false) {
-                lcd.print("L");
-            }
+            lcd.print("° P:");
+            lcd.print(String(SW_ANGLE_PREVIOUS));
+            lcd.print("° D:");
+            lcd.print(String(ANGLE_DIFF_ABS));
             lcd.print("                ");
+
+            // print SW rotation and wheels direction
             lcd.setCursor(0, 1);
-            lcd.print("ROT:");
+            lcd.print("ROT: ");
             if (SW_ROTATION == true){
                 lcd.print("R");
             } else if (SW_ROTATION == false) {
                 lcd.print("L");
+            }
+            lcd.print(" | WH: ");
+            if (WHEELS_DIR == true){
+                lcd.print("R");
+            } else if (WHEELS_DIR == false) {
+                lcd.print("L");
             }            
             lcd.print("                ");
         }
+/*
         if (SW_ANGLE > 30){
             if (WHEELS_DIR == true){
                 if (SW_ROTATION == true) {
@@ -208,7 +231,8 @@ void loop() {
             //if(enableLCD){ lcd.print(buf[i], HEX); lcd.print("|"); }
         }
         Serial.println();
-    }
+*/
+    } // end CAN receive
     
     /*left_on();
     delay(1500);
@@ -217,5 +241,5 @@ void loop() {
     delay(1500);
     right_off();
     */
-
+    SW_ANGLE_PREVIOUS = SW_ANGLE; // save previous SW_ANGLE value
 }
