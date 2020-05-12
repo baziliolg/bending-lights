@@ -82,7 +82,8 @@ void setup() {
     // initialize digital pins as an output.
     pinMode(right_pin, OUTPUT);
     pinMode(left_pin, OUTPUT);
-    
+    digitalWrite(right_pin, LOW);
+    digitalWrite(left_pin, LOW);
     // enable serial port output
     //Serial.begin(115200);
 
@@ -147,14 +148,14 @@ void loop() {
         Serial.print(canId, HEX);
         Serial.print(": ");
 */
-        analogWrite(left_pin, 0); // dark if another message received
+        //analogWrite(left_pin, 0); // dark if another message received
         if (canId == 0x076){ // filter CAN message flow for the message I am interested in
-            analogWrite(left_pin, 255); // light up if message with CAN ID 0x76 received
+            //analogWrite(left_pin, 255); // light up if message with CAN ID 0x76 received
 
             // getting the direction where wheels are pointing at, left=0 right=1
             WHEELS_DIR = buf[0] & 0x40; // grab bit 1 from byte 0
 
-            // getting rotation direction of the steering wheel
+            // getting rotation direction of the steering wheel, left=0 right=1
             SW_ROTATION = buf[2] & 0x80; // grab bit 0 from byte 2
 
             // getting the steering wheel angle
@@ -199,31 +200,25 @@ void loop() {
             }            
             lcd.print("                ");
         }
-/*
-        if (SW_ANGLE > 30){
-            if (WHEELS_DIR == true){
-                if (SW_ROTATION == true) {
-                    right_on();
-                } else if (SW_ROTATION == false){
-                    right_off();
-                    left_on();
-                }
-                
-            }
-            else if (!WHEELS_DIR) {
-                if (!SW_ROTATION) {
-                    left_on();
-                } else if (SW_ROTATION){
-                    left_off();
-                    right_on();
-                }
-            }
-        } else if (SW_ANGLE < 30){
-            right_off();
-            left_off();
-        }
-        
 
+        // Let's light up the lamps!
+        if (int(SW_ANGLE) > 40){
+            if (WHEELS_DIR == true){ // wheels are turned right
+                digitalWrite(right_pin, HIGH);
+                digitalWrite(left_pin, LOW);
+            } else if (WHEELS_DIR == false){ // wheels are turned left
+                digitalWrite(right_pin, LOW);
+                digitalWrite(left_pin, HIGH);
+            }
+        } else if (int(SW_ANGLE) < 40){
+        // TODO: delay turn off previous side like WV does; probably use SW_ROTATION?
+        // Check if L or R lamp is still on when the steering wheel has already
+        // turned through zero position and SW_ROTATION is opposite to the previous enabled lamp
+            digitalWrite(right_pin, LOW);
+            digitalWrite(left_pin, LOW);
+        }
+
+/*
         for(int i = 0; i<len; i++)    // print the data
         {
             Serial.print(buf[i], BIN);
@@ -234,12 +229,5 @@ void loop() {
 */
     } // end CAN receive
     
-    /*left_on();
-    delay(1500);
-    left_off();
-    right_on();
-    delay(1500);
-    right_off();
-    */
     SW_ANGLE_PREVIOUS = SW_ANGLE; // save previous SW_ANGLE value
 }
