@@ -110,7 +110,7 @@ void setup() {
      *  For now it is the only message I am using.
      */
 
-    CAN.init_Mask(0, false, 0x76);
+    /*CAN.init_Mask(0, false, 0x76);
     CAN.init_Mask(1, false, 0x76);
 
     CAN.init_Filt(0, false, 0x76);
@@ -119,7 +119,7 @@ void setup() {
     CAN.init_Filt(3, false, 0x76);
     CAN.init_Filt(4, false, 0x76);
     CAN.init_Filt(5, false, 0x76);
-
+    */
 }
 
 void loop() {
@@ -132,6 +132,9 @@ void loop() {
     static short ANGLE_DIFF_ABS;
     static bool SW_ROTATION;
     static bool WHEELS_DIR;
+    static bool REVERSE;
+    static bool REV_D2;
+    static bool REV_D3;
 
     // try to receive CAN messages and show them in Serial port
     unsigned char len = 0;
@@ -149,17 +152,17 @@ void loop() {
         Serial.print(": ");
 */
         //analogWrite(left_pin, 0); // dark if another message received
-        if (canId == 0x076){ // filter CAN message flow for the message I am interested in
+        if (canId == 0x076){ // look for CAN messages from SASM module
             //analogWrite(left_pin, 255); // light up if message with CAN ID 0x76 received
 
             // getting the direction where wheels are pointing at, left=0 right=1
-            WHEELS_DIR = buf[0] & 0x40; // grab bit 1 from byte 0
+            WHEELS_DIR = buf[0] & 0x40; // grab bit 1 from byte 00
 
             // getting rotation direction of the steering wheel, left=0 right=1
-            SW_ROTATION = buf[2] & 0x80; // grab bit 0 from byte 2
+            SW_ROTATION = buf[2] & 0x80; // grab bit 0 from byte 02
 
             // getting the steering wheel angle
-            /* I must cut off first two bits of 6th (7th if counting from 1) byte of message with CAN ID 0x076
+            /*  I must cut off first two bits of 6th (7th if counting from 1) byte of message with CAN ID 0x076
                 in order to get 14-bit value of steering angle from bytes 6 and 7.
                 That is why there is this mask 0x3f, it is 00111111 in binary,
                 ones means "copy this bit", zeroes mean "ignore" */
@@ -167,37 +170,56 @@ void loop() {
             swAngleMessage = word(sixth_byte,buf[7]);
             SW_ANGLE = swAngleMessage * 0.04395;
 
-            /* Try to at least see previous angle value
+            /*  Try to at least see previous angle value
              *  probably will use for smoothing out angle */
             ANGLE_DIFF = SW_ANGLE - SW_ANGLE_PREVIOUS;
             ANGLE_DIFF_ABS = abs(ANGLE_DIFF);
 
         }   // end filtering for 0x076 message
+        if (canId == 0x1BE){ // this must be TCM module
+            /*  CD 58 5E 34 83 FF 00 00 means R is engaged
+             *  but most of the bits do not change
+             */
+            REV_D2 = buf[2] & 0x2; // grab bit 6 from byte 02
+            REV_D3 = buf[3] & 0x4; // grab bit 5 from byte 03
+            if (REV_D2 && REV_D3){
+                // if stars align then we are in reverse gear
+                REVERSE = true;
+            }
+            else {
+                REVERSE = false;
+            }
+        }
 
         if(enableLCD){ 
             // print angle
             lcd.setCursor(0, 0);
             lcd.print(String(SW_ANGLE));
-            lcd.print("° P:");
+            lcd.print("°");
+            /*lcd.print(" P:");
             lcd.print(String(SW_ANGLE_PREVIOUS));
             lcd.print("° D:");
             lcd.print(String(ANGLE_DIFF_ABS));
+            */
             lcd.print("                ");
 
             // print SW rotation and wheels direction
             lcd.setCursor(0, 1);
-            lcd.print("ROT: ");
+            lcd.print("ROT:");
             if (SW_ROTATION == true){
                 lcd.print("R");
             } else if (SW_ROTATION == false) {
                 lcd.print("L");
             }
-            lcd.print(" | WH: ");
+            lcd.print("|WH:");
             if (WHEELS_DIR == true){
                 lcd.print("R");
             } else if (WHEELS_DIR == false) {
                 lcd.print("L");
             }            
+            if (REVERSE){
+                lcd.print("|REV");
+            }
             lcd.print("                ");
         }
 
