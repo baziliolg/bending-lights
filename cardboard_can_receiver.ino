@@ -7,8 +7,6 @@ const byte left_pin = 5;
 
 bool left_already_on = false;
 bool right_already_on = false;
-bool left_already_off = false;
-bool right_already_off = false;
 
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
@@ -19,6 +17,28 @@ MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
 #include <LCD_1602_RUS_ALL.h>
 LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
 boolean enableLCD = true;
+
+static byte tmp_byte;   // temporary variable for bit grab
+static short swAngleMessage; // where to assemble Steering Wheel angle from 14-bit message
+static short SW_ANGLE; // final steering wheel angle value   
+
+/*
+// For calculate previous steering wheel angle, unused for now.
+static short SW_ANGLE_PREVIOUS;
+short ANGLE_DIFF;
+static short ANGLE_DIFF_ABS;
+*/
+static bool SW_ROTATION; // which side the steering wheel is rotated to. Available on HS-CAN.
+
+static bool WHEELS_DIR;
+static bool REVERSE; // Reverse gear engaged
+static bool LIGHTS; // Low beam headlight are on
+
+/*
+// temporary values used to assemble Reverse Gear boolean if using HS-CAN.
+static bool REV_D2;
+static bool REV_D3;
+*/
 
 // PWM fade-in functions
 void left_on() {
@@ -31,7 +51,6 @@ void left_on() {
     // make sure it is fully on in the end
     analogWrite(left_pin, 255);
     left_already_on = true;
-    left_already_off = false;
     }
 }
 
@@ -45,35 +64,26 @@ void right_on() {
     // make sure it is fully on in the end
     analogWrite(right_pin, 255);
     right_already_on = true;
-    right_already_off = false;
     }
 }
 
 // PWM fade-out fun_ctions
 void left_off() {
-    if (!left_already_off) {
-    left_already_off = true;
-    left_already_on = false;
   for (int i = 255; i >= 0; i=i-1) {
     analogWrite(left_pin, i);
     delay(3);
   }
   // make sure it is off in the end
   analogWrite(left_pin, 0);
-    }
 }
 
 void right_off() {
-    if (!right_already_off) {
-    right_already_off = true;
-    right_already_on = false;
   for (int i = 255; i >= 0; i=i-1) {
     analogWrite(right_pin, i);
     delay(3);
   }
   // make sure it is off in the end
   analogWrite(right_pin, 0);
-    }
 }
 
 
@@ -84,8 +94,6 @@ void setup() {
     pinMode(left_pin, OUTPUT);
     digitalWrite(right_pin, LOW);
     digitalWrite(left_pin, LOW);
-    // enable serial port output
-    //Serial.begin(115200);
 
     if(enableLCD){
         // LCD display will be used for debugging
@@ -93,27 +101,25 @@ void setup() {
         lcd.backlight();
     }
 
-    while (CAN_OK != CAN.begin(CAN_500KBPS, MCP_8MHz))              // init can bus : baudrate = 500k
+    while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz))              // init can bus, make sure you select correct bus speed
     {
-/*        Serial.println("CAN BUS Shield init fail");
-        Serial.println("Init CAN BUS Shield again");
-        delay(100);
-*/
         if(enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init FAILED"); }
     }
-/*    Serial.println("CAN shield init ok!"); */
     if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); }
 
     /* Now I'll try to init CAN message masks and filters
      *  CAN message ID is 11 bits long, full 11-bit mask is 0x7FF.
      *  Note: CAN ID 0x076 is 00001110110
-     *  For now it is the only message I am using.
      */
 
-    /*CAN.init_Mask(0, false, 0x76);
-    CAN.init_Mask(1, false, 0x76);
+    /*  The following masks are for MS CAN messages with ID 433 and 480.
+     *  It looks super weird, and it IS weird.
+     *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
+     */
+    CAN.init_Mask(0, false, 0x9660000);
+    CAN.init_Mask(1, false, 0x9660000);
 
-    CAN.init_Filt(0, false, 0x76);
+    /*CAN.init_Filt(0, false, 0x76);
     CAN.init_Filt(1, false, 0x76);
     CAN.init_Filt(2, false, 0x76);
     CAN.init_Filt(3, false, 0x76);
@@ -123,19 +129,6 @@ void setup() {
 }
 
 void loop() {
-    static byte sixth_byte;
-    // where to assemble Steering Wheel angle from 14-bit message
-    static short swAngleMessage;
-    static short SW_ANGLE;
-    static short SW_ANGLE_PREVIOUS;
-    short ANGLE_DIFF;
-    static short ANGLE_DIFF_ABS;
-    static bool SW_ROTATION;
-    static bool WHEELS_DIR;
-    static bool REVERSE;
-    static bool REV_D2;
-    static bool REV_D3;
-
     // try to receive CAN messages and show them in Serial port
     unsigned char len = 0;
     unsigned char buf[8];
@@ -145,42 +138,46 @@ void loop() {
     {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
         unsigned long canId = CAN.getCanId();
-/*
-        Serial.print("len "); Serial.print(len);
-        Serial.print(" ID 0x");
-        Serial.print(canId, HEX);
-        Serial.print(": ");
-*/
-        //analogWrite(left_pin, 0); // dark if another message received
-        if (canId == 0x076){ // look for CAN messages from SASM module
-            //analogWrite(left_pin, 255); // light up if message with CAN ID 0x76 received
 
-            // getting the direction where wheels are pointing at, left=0 right=1
+        if (canId == 0x480){ // MS-CAN message which contains steering wheel angle
+            WHEELS_DIR = buf[6] & 0x80;
+            tmp_byte = buf[6] & 0x7F;
+            swAngleMessage = word(tmp_byte,buf[7]);
+            SW_ANGLE = swAngleMessage * 0.04395;
+        }
+        if (canId == 0x433){ // this message contains Reverse gear and Lights on/off
+            LIGHTS = buf[3] & 0x80;
+            REVERSE = buf[3] & 0x2;
+        }
+/*        
+        if (canId == 0x076){ // look for CAN messages from SASM module
+            // get the direction where wheels are pointing at, left=0 right=1
             WHEELS_DIR = buf[0] & 0x40; // grab bit 1 from byte 00
 
-            // getting rotation direction of the steering wheel, left=0 right=1
+            // get rotation direction of the steering wheel, left=0 right=1
             SW_ROTATION = buf[2] & 0x80; // grab bit 0 from byte 02
 
-            // getting the steering wheel angle
+            // get the steering wheel angle
             /*  I must cut off first two bits of 6th (7th if counting from 1) byte of message with CAN ID 0x076
                 in order to get 14-bit value of steering angle from bytes 6 and 7.
                 That is why there is this mask 0x3f, it is 00111111 in binary,
                 ones means "copy this bit", zeroes mean "ignore" */
-            sixth_byte = buf[6] & 0x3F;
-            swAngleMessage = word(sixth_byte,buf[7]);
+/*            tmp_byte = buf[6] & 0x3F;
+            swAngleMessage = word(tmp_byte,buf[7]);
             SW_ANGLE = swAngleMessage * 0.04395;
 
             /*  Try to at least see previous angle value
-             *  probably will use for smoothing out angle */
-            ANGLE_DIFF = SW_ANGLE - SW_ANGLE_PREVIOUS;
+             *  probably can be used to smooth value changes */
+/*            ANGLE_DIFF = SW_ANGLE - SW_ANGLE_PREVIOUS;
             ANGLE_DIFF_ABS = abs(ANGLE_DIFF);
 
         }   // end filtering for 0x076 message
+        
         if (canId == 0x1BE){ // this must be TCM module
             /*  CD 58 5E 34 83 FF 00 00 means R is engaged
              *  but most of the bits do not change
              */
-            REV_D2 = buf[2] & 0x2; // grab bit 6 from byte 02
+/*            REV_D2 = buf[2] & 0x2; // grab bit 6 from byte 02
             REV_D3 = buf[3] & 0x4; // grab bit 5 from byte 03
             if (REV_D2 && REV_D3){
                 // if stars align then we are in reverse gear
@@ -190,7 +187,7 @@ void loop() {
                 REVERSE = false;
             }
         }
-
+*/
         if(enableLCD){ 
             // print angle
             lcd.setCursor(0, 0);
@@ -205,18 +202,21 @@ void loop() {
 
             // print SW rotation and wheels direction
             lcd.setCursor(0, 1);
-            lcd.print("ROT:");
+            /*lcd.print("ROT:");
             if (SW_ROTATION == true){
                 lcd.print("R");
             } else if (SW_ROTATION == false) {
                 lcd.print("L");
-            }
-            lcd.print("|WH:");
+            }*/
+            lcd.print("WH:");
             if (WHEELS_DIR == true){
                 lcd.print("R");
             } else if (WHEELS_DIR == false) {
                 lcd.print("L");
             }            
+            if (LIGHTS){
+                lcd.print("|LB");
+            }
             if (REVERSE){
                 lcd.print("|REV");
             }
@@ -239,17 +239,7 @@ void loop() {
             digitalWrite(right_pin, LOW);
             digitalWrite(left_pin, LOW);
         }
-
-/*
-        for(int i = 0; i<len; i++)    // print the data
-        {
-            Serial.print(buf[i], BIN);
-            Serial.print("\t");
-            //if(enableLCD){ lcd.print(buf[i], HEX); lcd.print("|"); }
-        }
-        Serial.println();
-*/
     } // end CAN receive
     
-    SW_ANGLE_PREVIOUS = SW_ANGLE; // save previous SW_ANGLE value
+//    SW_ANGLE_PREVIOUS = SW_ANGLE; // save previous SW_ANGLE value
 }
