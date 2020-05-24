@@ -5,8 +5,10 @@
 const byte right_pin = 6;
 const byte left_pin = 5;
 
-bool left_already_on = false;
-bool right_already_on = false;
+unsigned long counter = 0;  // for debugging CAN masks and filters
+
+static bool left_is_on = false;
+static bool right_is_on = false;
 
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
@@ -28,7 +30,7 @@ static short SW_ANGLE_PREVIOUS;
 short ANGLE_DIFF;
 static short ANGLE_DIFF_ABS;
 */
-static bool SW_ROTATION; // which side the steering wheel is rotated to. Available on HS-CAN.
+//static bool SW_ROTATION; // which side the steering wheel is rotated to. Available on HS-CAN.
 
 static bool WHEELS_DIR;
 static bool REVERSE; // Reverse gear engaged
@@ -41,49 +43,65 @@ static bool REV_D3;
 */
 
 // PWM fade-in functions
-void left_on() {
-   if (!left_already_on){
-        
-        for (int i = 0; i <= 255; i=i+5) {
-            analogWrite(left_pin, i);
-            delay(10);
-        }
+// generic fade-in function for code reuse
+void pwm_on(byte pin){
+    for (int i = 0; i <= 255; i=i+5) {
+        analogWrite(pin, i);
+        delay(10);
+    }
     // make sure it is fully on in the end
-    analogWrite(left_pin, 255);
-    left_already_on = true;
+    analogWrite(pin, 255);
+}
+
+// direction-specific functions
+void left_on() {
+    byte my_pin = left_pin;
+    if (!left_is_on){
+        if (REVERSE){
+            my_pin = right_pin;
+        }
+        pwm_on(my_pin);
+        left_is_on = true;
     }
 }
 
 void right_on() {
-    if (!right_already_on){
-    
-    for (int i = 0; i <= 255; i=i+5) {
-        analogWrite(right_pin, i);
-        delay(10);
-    }
-    // make sure it is fully on in the end
-    analogWrite(right_pin, 255);
-    right_already_on = true;
+    byte my_pin = right_pin;
+    if (!right_is_on){
+        if (REVERSE){
+            my_pin = left_pin;
+        }
+        pwm_on(my_pin);
+        right_is_on = true;
     }
 }
 
-// PWM fade-out fun_ctions
+// PWM fade-out functions
+// generic fade-out function for code reuse
+void pwm_off(byte pin){
+    for (int i = 255; i >= 0; i=i-1) {
+        analogWrite(pin, i);
+        delay(3);
+    }
+    // make sure it is fully off in the end
+    analogWrite(pin, 0);
+}
+
+// direction-specific functions
 void left_off() {
-  for (int i = 255; i >= 0; i=i-1) {
-    analogWrite(left_pin, i);
-    delay(3);
-  }
-  // make sure it is off in the end
-  analogWrite(left_pin, 0);
+    byte my_pin = left_pin;
+    if (left_is_on){
+        left_is_on = false;
+        pwm_off(my_pin);
+    }
 }
 
 void right_off() {
-  for (int i = 255; i >= 0; i=i-1) {
-    analogWrite(right_pin, i);
-    delay(3);
-  }
-  // make sure it is off in the end
-  analogWrite(right_pin, 0);
+    byte my_pin = right_pin;
+    if (right_is_on){
+        right_is_on = false;
+        pwm_off(my_pin);
+    }
 }
 
 
@@ -113,19 +131,20 @@ void setup() {
      */
 
     /*  The following masks are for MS CAN messages with ID 433 and 480.
-     *  It looks super weird, and it IS weird.
+     *  The mask tells the controller which specific bits to check,
+     *  and the filter tells it how those bits should be set (or unset).
      *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
      */
-    CAN.init_Mask(0, false, 0x9660000);
-    CAN.init_Mask(1, false, 0x9660000);
 
-    /*CAN.init_Filt(0, false, 0x76);
-    CAN.init_Filt(1, false, 0x76);
-    CAN.init_Filt(2, false, 0x76);
-    CAN.init_Filt(3, false, 0x76);
-    CAN.init_Filt(4, false, 0x76);
-    CAN.init_Filt(5, false, 0x76);
-    */
+    CAN.init_Mask(0, false, 0x4B3);
+    CAN.init_Mask(1, false, 0x4B3);
+
+    CAN.init_Filt(0, false, 0x433);
+    CAN.init_Filt(1, false, 0x480);
+    CAN.init_Filt(2, false, 0x433);
+    CAN.init_Filt(3, false, 0x480);
+    CAN.init_Filt(4, false, 0x433);
+    CAN.init_Filt(5, false, 0x480);
 }
 
 void loop() {
@@ -138,14 +157,13 @@ void loop() {
     {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
         unsigned long canId = CAN.getCanId();
-
+        counter++;
         if (canId == 0x480){ // MS-CAN message which contains steering wheel angle
             WHEELS_DIR = buf[6] & 0x80;
             tmp_byte = buf[6] & 0x7F;
             swAngleMessage = word(tmp_byte,buf[7]);
             SW_ANGLE = swAngleMessage * 0.04395;
-        }
-        if (canId == 0x433){ // this message contains Reverse gear and Lights on/off
+        } else if (canId == 0x433){ // this MS-CAN message contains Reverse gear and Lights on/off
             LIGHTS = buf[3] & 0x80;
             REVERSE = buf[3] & 0x2;
         }
@@ -198,6 +216,8 @@ void loop() {
             lcd.print("° D:");
             lcd.print(String(ANGLE_DIFF_ABS));
             */
+            lcd.print("|C:"); // this is for debugging CAN masks and filters
+            lcd.print(String(counter));
             lcd.print("                ");
 
             // print SW rotation and wheels direction
@@ -226,18 +246,30 @@ void loop() {
         // Let's light up the lamps!
         if (int(SW_ANGLE) > 40){
             if (WHEELS_DIR == true){ // wheels are turned right
+                /*
                 digitalWrite(right_pin, HIGH);
                 digitalWrite(left_pin, LOW);
+                */
+                right_on();
+                left_off();
             } else if (WHEELS_DIR == false){ // wheels are turned left
+                /*
                 digitalWrite(right_pin, LOW);
                 digitalWrite(left_pin, HIGH);
+                */
+                right_off();
+                left_on();
             }
         } else if (int(SW_ANGLE) < 40){
         // TODO: delay turn off previous side like WV does; probably use SW_ROTATION?
         // Check if L or R lamp is still on when the steering wheel has already
         // turned through zero position and SW_ROTATION is opposite to the previous enabled lamp
+            /*
             digitalWrite(right_pin, LOW);
             digitalWrite(left_pin, LOW);
+            */
+            right_off();
+            left_off();
         }
     } // end CAN receive
     
