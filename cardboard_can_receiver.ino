@@ -4,6 +4,7 @@
 // Define which digital pins are for left and right side
 const byte right_pin = 6;
 const byte left_pin = 5;
+short SW_ANGLE_THRESHOLD = 40; // light ON if SW_ANGLE > this
 
 unsigned long counter = 0;  // for debugging CAN masks and filters
 
@@ -33,8 +34,8 @@ static short ANGLE_DIFF_ABS;
 //static bool SW_ROTATION; // which side the steering wheel is rotated to. Available on HS-CAN.
 
 static bool WHEELS_DIR;
-static bool REVERSE; // Reverse gear engaged
-static bool LIGHTS; // Low beam headlight are on
+static bool REVERSE = false; // Reverse gear engaged
+static bool LIGHTS = false; // Low beam headlights are on
 
 /*
 // temporary values used to assemble Reverse Gear boolean if using HS-CAN.
@@ -45,21 +46,21 @@ static bool REV_D3;
 // PWM fade-in functions
 // generic fade-in function for code reuse
 void pwm_on(byte pin){
+    /*
     for (int i = 0; i <= 255; i=i+5) {
         analogWrite(pin, i);
         delay(10);
     }
+    */
     // make sure it is fully on in the end
-    analogWrite(pin, 255);
+    //analogWrite(pin, 255);
+    digitalWrite(pin, HIGH);
 }
 
 // direction-specific functions
 void left_on() {
     byte my_pin = left_pin;
     if (!left_is_on){
-        if (REVERSE){
-            my_pin = right_pin;
-        }
         pwm_on(my_pin);
         left_is_on = true;
     }
@@ -68,9 +69,6 @@ void left_on() {
 void right_on() {
     byte my_pin = right_pin;
     if (!right_is_on){
-        if (REVERSE){
-            my_pin = left_pin;
-        }
         pwm_on(my_pin);
         right_is_on = true;
     }
@@ -79,28 +77,31 @@ void right_on() {
 // PWM fade-out functions
 // generic fade-out function for code reuse
 void pwm_off(byte pin){
+    /*
     for (int i = 255; i >= 0; i=i-1) {
         analogWrite(pin, i);
         delay(3);
     }
+    */
     // make sure it is fully off in the end
-    analogWrite(pin, 0);
+    //analogWrite(pin, 0);
+    digitalWrite(pin, LOW);
 }
 
 // direction-specific functions
 void left_off() {
     byte my_pin = left_pin;
     if (left_is_on){
-        left_is_on = false;
         pwm_off(my_pin);
+        left_is_on = false;
     }
 }
 
 void right_off() {
     byte my_pin = right_pin;
     if (right_is_on){
-        right_is_on = false;
         pwm_off(my_pin);
+        right_is_on = false;
     }
 }
 
@@ -110,12 +111,13 @@ void setup() {
     // initialize digital pins as an output.
     pinMode(right_pin, OUTPUT);
     pinMode(left_pin, OUTPUT);
+    // immediately send LOW to those pins so that lights don't light up by mistake
     digitalWrite(right_pin, LOW);
     digitalWrite(left_pin, LOW);
 
     if(enableLCD){
         // LCD display will be used for debugging
-        lcd.init(); // Инициализация LCD
+        lcd.init();
         lcd.backlight();
     }
 
@@ -127,7 +129,7 @@ void setup() {
 
     /* Now I'll try to init CAN message masks and filters
      *  CAN message ID is 11 bits long, full 11-bit mask is 0x7FF.
-     *  Note: CAN ID 0x076 is 00001110110
+     *  Note: HS-CAN ID 0x076 is 00001110110
      */
 
     /*  The following masks are for MS CAN messages with ID 433 and 480.
@@ -216,7 +218,7 @@ void loop() {
             lcd.print("° D:");
             lcd.print(String(ANGLE_DIFF_ABS));
             */
-            lcd.print("|C:"); // this is for debugging CAN masks and filters
+            lcd.print("|C:"); // aka "Counter", this is for debugging CAN masks and filters when replaying logs from computer
             lcd.print(String(counter));
             lcd.print("                ");
 
@@ -235,7 +237,7 @@ void loop() {
                 lcd.print("L");
             }            
             if (LIGHTS){
-                lcd.print("|LB");
+                lcd.print("|LB"); // "Low Beam"
             }
             if (REVERSE){
                 lcd.print("|REV");
@@ -244,33 +246,49 @@ void loop() {
         }
 
         // Let's light up the lamps!
-        if (int(SW_ANGLE) > 40){
-            if (WHEELS_DIR == true){ // wheels are turned right
-                /*
-                digitalWrite(right_pin, HIGH);
-                digitalWrite(left_pin, LOW);
-                */
-                right_on();
-                left_off();
-            } else if (WHEELS_DIR == false){ // wheels are turned left
-                /*
-                digitalWrite(right_pin, LOW);
-                digitalWrite(left_pin, HIGH);
-                */
+        if (LIGHTS){
+            if (int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD)){
+                if (WHEELS_DIR == true){ // wheels are turned right
+                    if (!REVERSE) {
+                        // TODO: insert small delay here to prevent flashing lights
+                        // when rapidly switching from N to P (through R).
+                        right_on();
+                        left_off();
+                    } else if (REVERSE){
+                        right_off();
+                        left_on();
+                    }
+                } else if (WHEELS_DIR == false){ // wheels are turned left
+                    if (!REVERSE) {
+                        // TODO: insert small delay here to prevent flashing lights
+                        // when rapidly switching from N to P (through R).
+                        right_off();
+                        left_on();
+                    } else if (REVERSE){
+                        right_on();
+                        left_off();
+                    }
+                }
+            } else if (int(SW_ANGLE) < int(SW_ANGLE_THRESHOLD)){ // steering wheel angle lower than threshold
+        /*
+         * TODO: delay turn off previous side like WV does; probably use SW_ROTATION?
+         * Check if L or R lamp is still on when the steering wheel has already
+         * turned through zero position and SW_ROTATION is opposite to the previous enabled lamp
+         */
                 right_off();
-                left_on();
+                left_off();
             }
-        } else if (int(SW_ANGLE) < 40){
-        // TODO: delay turn off previous side like WV does; probably use SW_ROTATION?
-        // Check if L or R lamp is still on when the steering wheel has already
-        // turned through zero position and SW_ROTATION is opposite to the previous enabled lamp
-            /*
-            digitalWrite(right_pin, LOW);
-            digitalWrite(left_pin, LOW);
-            */
+        }
+        else { // light is off
             right_off();
             left_off();
         }
+
+        if (!LIGHTS && (SW_ANGLE < SW_ANGLE_THRESHOLD)){ // second time for failsafe operation?
+            right_off();
+            left_off();
+        }
+        
     } // end CAN receive
     
 //    SW_ANGLE_PREVIOUS = SW_ANGLE; // save previous SW_ANGLE value
