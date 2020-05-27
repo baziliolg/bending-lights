@@ -136,8 +136,18 @@ void setup() {
      *  The mask tells the controller which specific bits to check,
      *  and the filter tells it how those bits should be set (or unset).
      *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
+     *
+     *  In this particular case, I want to configure Mask to include both
+     *  ID 0x433 and ID 0x480. I look at their binary form:
+     *  0x433:  10000110011
+     *  0x480:  10010000000
+     *  so the resulting mask to include these bits will be:
+     *          10010110011 == 0x4B3
+     *
+     *  Then, I should set up Filters, so that the Mask + Filter combo
+     *  becomes more precise.
      */
-
+    // TODO: include VSS (vehicle speed) message
     CAN.init_Mask(0, false, 0x4B3);
     CAN.init_Mask(1, false, 0x4B3);
 
