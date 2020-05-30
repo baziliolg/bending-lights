@@ -21,9 +21,12 @@ MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
 LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
 boolean enableLCD = true;
 
-static byte tmp_byte;   // temporary variable for bit grab
-static short swAngleMessage; // where to assemble Steering Wheel angle from 14-bit message
-static short SW_ANGLE; // final steering wheel angle value   
+static byte tmp_byte;           // temporary variable for bit grab
+static short swAngleMessage;    // where to assemble Steering Wheel angle from 14-bit message
+static short SW_ANGLE;          // final steering wheel angle value   
+
+static short vssMessage;    // where to assemble Vehicle Speed from 16-bit message
+static short VSS;           // final Vehicle Speed value
 
 /*
 // For calculate previous steering wheel angle, unused for now.
@@ -132,7 +135,7 @@ void setup() {
      *  Note: HS-CAN ID 0x076 is 00001110110
      */
 
-    /*  The following masks are for MS CAN messages with ID 433 and 480.
+    /*  The following masks are for MS CAN messages with ID 433 and 480 and 0x08b.
      *  The mask tells the controller which specific bits to check,
      *  and the filter tells it how those bits should be set (or unset).
      *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
@@ -141,44 +144,67 @@ void setup() {
      *  ID 0x433 and ID 0x480. I look at their binary form:
      *  0x433:  10000110011
      *  0x480:  10010000000
-     *  so the resulting mask to include these bits will be:
-     *          10010110011 == 0x4B3
+     *  0x08b:  00010001011
+     *  so the resulting mask to include these all bits of three CAN IDs will be:
+     *          10010111011 == 0x4BB
      *
      *  Then, I should set up Filters, so that the Mask + Filter combo
      *  becomes more precise.
      */
-    // TODO: include VSS (vehicle speed) message
-    CAN.init_Mask(0, false, 0x4B3);
-    CAN.init_Mask(1, false, 0x4B3);
+
+    CAN.init_Mask(0, false, 0x4BB);
+    CAN.init_Mask(1, false, 0x4BB);
 
     CAN.init_Filt(0, false, 0x433);
     CAN.init_Filt(1, false, 0x480);
-    CAN.init_Filt(2, false, 0x433);
+    CAN.init_Filt(2, false, 0x08b);
     CAN.init_Filt(3, false, 0x480);
     CAN.init_Filt(4, false, 0x433);
-    CAN.init_Filt(5, false, 0x480);
+    CAN.init_Filt(5, false, 0x08b);
 }
 
 void loop() {
-    // try to receive CAN messages and show them in Serial port
+    // receive CAN messages
     unsigned char len = 0;
     unsigned char buf[8];
-
-    
-    if(CAN_MSGAVAIL == CAN.checkReceive())            // check if data coming
+    if(CAN_MSGAVAIL == CAN.checkReceive())  // check if data coming
     {
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
-        unsigned long canId = CAN.getCanId();
-        counter++;
-        if (canId == 0x480){ // MS-CAN message which contains steering wheel angle
+        //unsigned long canId = CAN.getCanId();
+        unsigned int canId = CAN.getCanId();
+        counter++; // for debugging CAN masks and filters
+        // switch..case should be faster than if..else (not sure).
+        switch (canId) {
+            case 0x480:
+                WHEELS_DIR = buf[6] & 0x80;
+                tmp_byte = buf[6] & 0x7F;
+                swAngleMessage = word(tmp_byte,buf[7]);
+                SW_ANGLE = swAngleMessage * 0.04395;
+                break;
+            case 0x433:
+                LIGHTS = buf[3] & 0x80;
+                REVERSE = buf[3] & 0x2;
+                break;
+            case 0x08b:
+                vssMessage = word(buf[1],buf[2]);
+                VSS = vssMessage * 0.01072; // Value should be divided by 100. Also added small correction factor.
+                break;
+        }
+        
+/*        if (canId == 0x433){ // this MS-CAN message contains Reverse gear and Lights on/off
+            LIGHTS = buf[3] & 0x80;
+            REVERSE = buf[3] & 0x2;
+        } else if (canId == 0x480){ // MS-CAN message which contains steering wheel angle
             WHEELS_DIR = buf[6] & 0x80;
             tmp_byte = buf[6] & 0x7F;
             swAngleMessage = word(tmp_byte,buf[7]);
             SW_ANGLE = swAngleMessage * 0.04395;
-        } else if (canId == 0x433){ // this MS-CAN message contains Reverse gear and Lights on/off
-            LIGHTS = buf[3] & 0x80;
-            REVERSE = buf[3] & 0x2;
+        } else if (canId == 0x08b){ // MS-CAN message which should contain speed
+            vssMessage = word(buf[1],buf[2]);
+            VSS = vssMessage * 0.01072;
         }
+*/
+        
 /*        
         if (canId == 0x076){ // look for CAN messages from SASM module
             // get the direction where wheels are pointing at, left=0 right=1
@@ -223,11 +249,19 @@ void loop() {
             lcd.setCursor(0, 0);
             lcd.print(String(SW_ANGLE));
             lcd.print("°");
+            if (SW_ANGLE < 10){
+                lcd.print("  ");
+            } else if (SW_ANGLE < 100){
+                lcd.print(" ");
+            }
+            
             /*lcd.print(" P:");
             lcd.print(String(SW_ANGLE_PREVIOUS));
             lcd.print("° D:");
             lcd.print(String(ANGLE_DIFF_ABS));
             */
+            lcd.print("|VSS:");
+            lcd.print(String(VSS));           
             lcd.print("|C:"); // aka "Counter", this is for debugging CAN masks and filters when replaying logs from computer
             lcd.print(String(counter));
             lcd.print("                ");
@@ -265,6 +299,8 @@ void loop() {
                         right_on();
                         left_off();
                     } else if (REVERSE){
+                        // or should this small delay ^
+                        // go here (too)?
                         right_off();
                         left_on();
                     }
@@ -280,16 +316,11 @@ void loop() {
                     }
                 }
             } else if (int(SW_ANGLE) < int(SW_ANGLE_THRESHOLD)){ // steering wheel angle lower than threshold
-        /*
-         * TODO: delay turn off previous side like WV does; probably use SW_ROTATION?
-         * Check if L or R lamp is still on when the steering wheel has already
-         * turned through zero position and SW_ROTATION is opposite to the previous enabled lamp
-         */
                 right_off();
                 left_off();
             }
         }
-        else { // light is off
+        else { // if Low Beam is off then disable bending lights
             right_off();
             left_off();
         }
