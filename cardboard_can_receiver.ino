@@ -4,22 +4,18 @@
 // Define which digital pins are for left and right side
 const byte right_pin = 6;
 const byte left_pin = 5;
-short SW_ANGLE_THRESHOLD = 40; // light ON if SW_ANGLE > this
+static bool left_is_on = false;
+static bool right_is_on = false;
+
+short SW_ANGLE_THRESHOLD = 33; // Bending light ON if SW_ANGLE > this
 
 unsigned long counter = 0;  // for debugging CAN masks and filters
 
-static bool left_is_on = false;
-static bool right_is_on = false;
 
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
 MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
 
-// enable LCD (for debugging)
-#define _LCD_TYPE 1
-#include <LCD_1602_RUS_ALL.h>
-LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
-boolean enableLCD = true;
 
 static byte tmp_byte;           // temporary variable for bit grab
 static short swAngleMessage;    // where to assemble Steering Wheel angle from 14-bit message
@@ -34,11 +30,17 @@ static short SW_ANGLE_PREVIOUS;
 short ANGLE_DIFF;
 static short ANGLE_DIFF_ABS;
 */
-//static bool SW_ROTATION; // which side the steering wheel is rotated to. Available on HS-CAN.
+//static bool SW_ROTATION; // which side the steering wheel is being rotated to. Available on HS-CAN.
 
-static bool WHEELS_DIR;
+static bool WHEELS_DIR; // Where wheels are pointed to, 0=left, 1=right
 static bool REVERSE = false; // Reverse gear engaged
 static bool LIGHTS = false; // Low beam headlights are on
+
+// enable LCD (for debugging)
+#define _LCD_TYPE 1
+#include <LCD_1602_RUS_ALL.h>
+LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
+boolean enableLCD = true;
 
 /*
 // temporary values used to assemble Reverse Gear boolean if using HS-CAN.
@@ -49,14 +51,13 @@ static bool REV_D3;
 // PWM fade-in functions
 // generic fade-in function for code reuse
 void pwm_on(byte pin){
-    /*
-    for (int i = 0; i <= 255; i=i+5) {
+    for (int i = 0; i <= 255; i=i+1) {
         analogWrite(pin, i);
-        delay(10);
+        //delay(10);
+        // classic blocking delay was here
     }
-    */
+
     // make sure it is fully on in the end
-    //analogWrite(pin, 255);
     digitalWrite(pin, HIGH);
 }
 
@@ -86,8 +87,8 @@ void pwm_off(byte pin){
         delay(3);
     }
     */
+
     // make sure it is fully off in the end
-    //analogWrite(pin, 0);
     digitalWrite(pin, LOW);
 }
 
@@ -130,7 +131,8 @@ void setup() {
     }
     if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); }
 
-    /* Now I'll try to init CAN message masks and filters
+    /*  Now I'll try to init CAN message masks and filters
+     *  INFO: https://copperhilltech.com/content/MCP2515.pdf
      *  CAN message ID is 11 bits long, full 11-bit mask is 0x7FF.
      *  Note: HS-CAN ID 0x076 is 00001110110
      */
@@ -151,14 +153,15 @@ void setup() {
      *  Then, I should set up Filters, so that the Mask + Filter combo
      *  becomes more precise.
      */
-
-    CAN.init_Mask(0, false, 0x4BB);
-    CAN.init_Mask(1, false, 0x4BB);
-
-    CAN.init_Filt(0, false, 0x433);
+    // Two receiver buffers in MCP2515 have acceptance masks and filters assigned to each.
+    // RX buffer 0 (higher priority). Let's grab Steering Wheel angle in it.
+    CAN.init_Mask(0, false, 0x480);
+    CAN.init_Filt(0, false, 0x480);
     CAN.init_Filt(1, false, 0x480);
+    // RX buffer 1 (lower priority)
+    CAN.init_Mask(1, false, 0x4BB);
     CAN.init_Filt(2, false, 0x08b);
-    CAN.init_Filt(3, false, 0x480);
+    CAN.init_Filt(3, false, 0x433);
     CAN.init_Filt(4, false, 0x433);
     CAN.init_Filt(5, false, 0x08b);
 }
