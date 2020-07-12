@@ -268,7 +268,7 @@ void loop() {
         }
 
         // Let's light up the lamps!
-        if (LIGHTS){
+        if (LIGHTS && VSS < 80 ){
             if (int(SW_ANGLE) >= int(SW_ANGLE_THRESHOLD)){
                 if (WHEELS_DIR == true){ // wheels are turned right
                     if (!REVERSE) {
@@ -302,12 +302,12 @@ void loop() {
             right_off();
             left_off();
         }
-
+/*
         if (!LIGHTS && (SW_ANGLE < SW_ANGLE_THRESHOLD)){ // second time for failsafe operation?
             right_off();
             left_off();
         }
-        
+*/
     } // end CAN receive
 
 }
