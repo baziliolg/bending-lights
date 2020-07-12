@@ -9,6 +9,30 @@ static bool right_is_on = false;
 
 const short SW_ANGLE_THRESHOLD = 33; // Bending light ON if SW_ANGLE > this
 
+// PWM fade related vars.
+// Looks ugly, I know.
+static int onDelayLength = 250;
+static int offDelayLength = 1000;
+
+static byte rightBrightness = 0;
+static byte leftBrightness = 0;
+
+static unsigned long rightOffDelayStart = 0;
+static unsigned long rightOffPassedTime = 0;
+static bool rightOffDelayRunning = false;
+
+static unsigned long rightOnDelayStart = 0;
+static unsigned long rightOnPassedTime = 0;
+static bool rightOnDelayRunning = false;
+
+
+static unsigned long leftOffDelayStart = 0;
+static unsigned long leftOffPassedTime = 0;
+static bool leftOffDelayRunning = false;
+
+static unsigned long leftOnDelayStart = 0;
+static unsigned long leftOnPassedTime = 0;
+static bool leftOnDelayRunning = false;
 
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
@@ -22,14 +46,6 @@ static short SW_ANGLE;          // final steering wheel angle value
 static short vssMessage;    // where to assemble Vehicle Speed from 16-bit message
 static short VSS;           // final Vehicle Speed value
 
-/*
-// For calculate previous steering wheel angle, unused for now.
-static short SW_ANGLE_PREVIOUS;
-short ANGLE_DIFF;
-static short ANGLE_DIFF_ABS;
-*/
-//static bool SW_ROTATION; // which side the steering wheel is being rotated to. Available on HS-CAN.
-
 static bool WHEELS_DIR; // Where wheels are pointed to, 0=left, 1=right
 static bool REVERSE = false; // Reverse gear engaged
 static bool LIGHTS = false; // Low beam headlights are on
@@ -41,63 +57,96 @@ LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
 boolean enableLCD = true;
 
 // PWM fade-in functions
-// generic fade-in function for code reuse
-void pwm_on(byte pin){
-    for (int i = 0; i <= 255; i=i+1) {
-        analogWrite(pin, i);
-        //delay(10);
-        // classic blocking delay was here
-    }
-
-    // make sure it is fully on in the end
-    digitalWrite(pin, HIGH);
-}
 
 // direction-specific functions
 void left_on() {
     byte my_pin = left_pin;
     if (!left_is_on){
-        pwm_on(my_pin);
-        left_is_on = true;
+        if (!leftOnDelayRunning) {
+            leftOnDelayStart = millis(); // start delay
+            leftOnDelayRunning = true;
+            leftBrightness = 0;
+        }
+        leftOnPassedTime = millis() - leftOnDelayStart;
+
+        leftBrightness = (leftOnPassedTime)/(round(onDelayLength/255.0)+1);
+        analogWrite(my_pin, leftBrightness);
+
+        if (leftOnDelayRunning && ( leftOnPassedTime >= onDelayLength)) {
+            digitalWrite(my_pin, HIGH);
+            left_is_on = true;
+            leftOnDelayRunning = false;
+            leftOnPassedTime = 0;
+        }
     }
 }
 
 void right_on() {
     byte my_pin = right_pin;
     if (!right_is_on){
-        pwm_on(my_pin);
-        right_is_on = true;
+        if (!rightOnDelayRunning) {
+            rightOnDelayStart = millis(); // start delay
+            rightOnDelayRunning = true;
+            rightBrightness = 0;
+        }
+        rightOnPassedTime = millis() - rightOnDelayStart;
+
+        rightBrightness = (rightOnPassedTime)/(round(onDelayLength/255.0)+1);
+        analogWrite(my_pin, rightBrightness);
+
+        if (rightOnDelayRunning && ( rightOnPassedTime >= onDelayLength)) {
+            digitalWrite(my_pin, HIGH);
+            right_is_on = true;
+            rightOnDelayRunning = false;
+            rightOnPassedTime = 0;
+        }
     }
 }
 
 // PWM fade-out functions
-// generic fade-out function for code reuse
-void pwm_off(byte pin){
-    /*
-    for (int i = 255; i >= 0; i=i-1) {
-        analogWrite(pin, i);
-        delay(3);
-    }
-    */
-
-    // make sure it is fully off in the end
-    digitalWrite(pin, LOW);
-}
 
 // direction-specific functions
 void left_off() {
     byte my_pin = left_pin;
     if (left_is_on){
-        pwm_off(my_pin);
-        left_is_on = false;
+        if (!leftOffDelayRunning) {
+            leftOffDelayStart = millis(); // start delay
+            leftOffDelayRunning = true;
+            leftBrightness = 255;
+        }
+        leftOffPassedTime = millis() - leftOffDelayStart;
+
+        leftBrightness = (offDelayLength - leftOffPassedTime)/round(offDelayLength/255.0);
+        analogWrite(my_pin, leftBrightness);
+
+        if (leftOffDelayRunning && ( leftOffPassedTime >= offDelayLength)) {
+            digitalWrite(my_pin, LOW);
+            left_is_on = false;
+            leftOffDelayRunning = false;
+            leftOffPassedTime = 0;
+        }
     }
 }
 
 void right_off() {
     byte my_pin = right_pin;
     if (right_is_on){
-        pwm_off(my_pin);
-        right_is_on = false;
+        if (!rightOffDelayRunning) {
+            rightOffDelayStart = millis(); // start delay
+            rightOffDelayRunning = true;
+            rightBrightness = 255;
+        }
+        rightOffPassedTime = millis() - rightOffDelayStart;
+
+        rightBrightness = (offDelayLength - rightOffPassedTime)/round(offDelayLength/255.0);
+        analogWrite(my_pin, rightBrightness);
+
+        if (rightOffDelayRunning && ( rightOffPassedTime >= offDelayLength)) {
+            digitalWrite(my_pin, LOW);
+            right_is_on = false;
+            rightOffDelayRunning = false;
+            rightOffPassedTime = 0;
+        }
     }
 }
 
@@ -117,11 +166,11 @@ void setup() {
         lcd.backlight();
     }
 
-    while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz))              // init can bus, make sure you select correct bus speed
+    while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz)) // init CAN bus, make sure you select correct bus speed -- 125 kbit/s for MS-CAN
     {
         if(enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init FAILED"); }
     }
-    if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); }
+    if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); lcd.setCursor(0, 1); lcd.print(String(round(onDelayLength/255.0)+1));lcd.print("|"); lcd.print(String(round(offDelayLength/255.0))); }
 
     /*  Now I'll try to init CAN message masks and filters
      *  INFO: https://copperhilltech.com/content/MCP2515.pdf
@@ -135,7 +184,7 @@ void setup() {
      *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
      *
      *  In this particular case, I want to configure Mask to include both
-     *  ID 0x433 and ID 0x480. I look at their binary form:
+     *  ID 0x433 and ID 0x480 and ID 0x08b. I look at their binary form:
      *  0x433:  10000110011
      *  0x480:  10010000000
      *  0x08b:  00010001011
@@ -198,7 +247,7 @@ void loop() {
             }
             
             lcd.print("|VSS:");
-            lcd.print(String(VSS));           
+            lcd.print(String(VSS));
             lcd.print("                ");
 
             // print wheels direction
