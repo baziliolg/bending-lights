@@ -7,11 +7,11 @@ const byte left_pin = 5;
 static bool left_is_on = false;
 static bool right_is_on = false;
 
-const short SW_ANGLE_THRESHOLD = 33; // Bending light ON if SW_ANGLE > this
+const short SW_ANGLE_THRESHOLD = 40; // Bending light ON if SW_ANGLE > this
 
 // PWM fade related vars.
 // Looks ugly, I know.
-static int onDelayLength = 250;
+static int onDelayLength = 200;
 static int offDelayLength = 1000;
 
 static byte rightBrightness = 0;
@@ -54,7 +54,7 @@ static bool LIGHTS = false; // Low beam headlights are on
 #define _LCD_TYPE 1
 #include <LCD_1602_RUS_ALL.h>
 LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
-boolean enableLCD = true;
+boolean enableLCD = false;
 
 // PWM fade-in functions
 
