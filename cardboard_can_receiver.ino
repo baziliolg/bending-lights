@@ -13,6 +13,7 @@ const short SW_ANGLE_THRESHOLD = 40; // Bending light ON if SW_ANGLE > this
 // Looks ugly, I know.
 static int onDelayLength = 200;
 static int offDelayLength = 1000;
+int failsafeDelayLength = 2000;
 
 static byte rightBrightness = 0;
 static byte leftBrightness = 0;
@@ -34,10 +35,14 @@ static unsigned long leftOnDelayStart = 0;
 static unsigned long leftOnPassedTime = 0;
 static bool leftOnDelayRunning = false;
 
+static unsigned long failsafeDelayStart = 0;
+static unsigned long failsafePassedTime = 0;
+static bool failsafeDelayRunning = false;
+
 // Declare CAN as MCP_CAN
 const int SPI_CS_PIN = 9;
 MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
-
+unsigned int canId;
 
 static byte tmp_byte;           // temporary variable for bit grab
 static short swAngleMessage;    // where to assemble Steering Wheel angle from 14-bit message
@@ -73,10 +78,10 @@ void left_on() {
         analogWrite(my_pin, leftBrightness);
 
         if (leftOnDelayRunning && ( leftOnPassedTime >= onDelayLength)) {
-            digitalWrite(my_pin, HIGH);
             left_is_on = true;
             leftOnDelayRunning = false;
             leftOnPassedTime = 0;
+            digitalWrite(my_pin, HIGH);
         }
     }
 }
@@ -95,10 +100,10 @@ void right_on() {
         analogWrite(my_pin, rightBrightness);
 
         if (rightOnDelayRunning && ( rightOnPassedTime >= onDelayLength)) {
-            digitalWrite(my_pin, HIGH);
             right_is_on = true;
             rightOnDelayRunning = false;
             rightOnPassedTime = 0;
+            digitalWrite(my_pin, HIGH);
         }
     }
 }
@@ -120,10 +125,10 @@ void left_off() {
         analogWrite(my_pin, leftBrightness);
 
         if (leftOffDelayRunning && ( leftOffPassedTime >= offDelayLength)) {
-            digitalWrite(my_pin, LOW);
             left_is_on = false;
             leftOffDelayRunning = false;
             leftOffPassedTime = 0;
+            digitalWrite(my_pin, LOW);
         }
     }
 }
@@ -142,10 +147,10 @@ void right_off() {
         analogWrite(my_pin, rightBrightness);
 
         if (rightOffDelayRunning && ( rightOffPassedTime >= offDelayLength)) {
-            digitalWrite(my_pin, LOW);
             right_is_on = false;
             rightOffDelayRunning = false;
             rightOffPassedTime = 0;
+            digitalWrite(my_pin, LOW);
         }
     }
 }
@@ -211,103 +216,114 @@ void loop() {
     // receive CAN messages
     unsigned char len = 0;
     unsigned char buf[8];
-    if(CAN_MSGAVAIL == CAN.checkReceive())  // check if data coming
-    {
+    if(CAN_MSGAVAIL == CAN.checkReceive()) { // check if data coming
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
         //unsigned long canId = CAN.getCanId();
-        unsigned int canId = CAN.getCanId();
+        canId = CAN.getCanId();
+    } // end CAN receive
 
-        // switch..case should be faster than if..else (not sure).
-        switch (canId) {
-            case 0x480:
-                WHEELS_DIR = buf[6] & 0x80;
-                tmp_byte = buf[6] & 0x7F;
-                swAngleMessage = word(tmp_byte,buf[7]);
-                SW_ANGLE = swAngleMessage * 0.04395;
-                break;
-            case 0x433:
-                LIGHTS = buf[3] & 0x80;
-                REVERSE = buf[3] & 0x2;
-                break;
-            case 0x08b:
-                vssMessage = word(buf[1],buf[2]);
-                VSS = vssMessage * 0.01072; // Value should be divided by 100, that's why *0.01. Also added small correction factor.
-                break;
+    // Fill in variable values based on CAN messages
+    // switch..case should be faster than if..else (not sure).
+    switch (canId) {
+        case 0x480:
+            WHEELS_DIR = buf[6] & 0x80;
+            tmp_byte = buf[6] & 0x7F;
+            swAngleMessage = word(tmp_byte,buf[7]);
+            SW_ANGLE = swAngleMessage * 0.04395;
+            break;
+        case 0x433:
+            LIGHTS = buf[3] & 0x80;
+            REVERSE = buf[3] & 0x2;
+            break;
+        case 0x08b:
+            vssMessage = word(buf[1],buf[2]);
+            VSS = vssMessage * 0.01072; // Value should be divided by 100, that's why *0.01. Also added small correction factor.
+            break;
+    }
+
+    // Debug via LCD
+    if(enableLCD){
+        // print angle
+        lcd.setCursor(0, 0);
+        lcd.print(String(SW_ANGLE));
+        lcd.print("°");
+        if (SW_ANGLE < 10){
+            lcd.print("  ");
+        } else if (SW_ANGLE < 100){
+            lcd.print(" ");
         }
         
-        if(enableLCD){ 
-            // print angle
-            lcd.setCursor(0, 0);
-            lcd.print(String(SW_ANGLE));
-            lcd.print("°");
-            if (SW_ANGLE < 10){
-                lcd.print("  ");
-            } else if (SW_ANGLE < 100){
-                lcd.print(" ");
-            }
-            
-            lcd.print("|VSS:");
-            lcd.print(String(VSS));
-            lcd.print("                ");
+        lcd.print("|VSS:");
+        lcd.print(String(VSS));
+        lcd.print("                ");
 
-            // print wheels direction
-            lcd.setCursor(0, 1);
-            lcd.print("WH:");
-            if (WHEELS_DIR == true){
-                lcd.print("R");
-            } else if (WHEELS_DIR == false) {
-                lcd.print("L");
-            }            
-            if (LIGHTS){
-                lcd.print("|LB"); // "Low Beam"
-            }
-            if (REVERSE){
-                lcd.print("|REV"); // Reverse gear engaged
-            }
-            lcd.print("                ");
+        // print wheels direction
+        lcd.setCursor(0, 1);
+        lcd.print("WH:");
+        if (WHEELS_DIR == true){
+            lcd.print("R");
+        } else if (WHEELS_DIR == false) {
+            lcd.print("L");
         }
+        if (LIGHTS){
+            lcd.print("|LB"); // "Low Beam"
+        }
+        if (REVERSE){
+            lcd.print("|REV"); // Reverse gear engaged
+        }
+        lcd.print("                ");
+    }
 
-        // Let's light up the lamps!
-        if (LIGHTS && VSS < 80 ){
-            if (int(SW_ANGLE) >= int(SW_ANGLE_THRESHOLD)){
-                if (WHEELS_DIR == true){ // wheels are turned right
-                    if (!REVERSE) {
-                        // TODO: insert small delay here to prevent flashing lights
-                        // when rapidly switching from N to P (through R).
-                        right_on();
-                        left_off();
-                    } else if (REVERSE){
-                        // or should this small delay ^
-                        // go here (too)?
-                        right_off();
-                        left_on();
-                    }
-                } else if (WHEELS_DIR == false){ // wheels are turned left
-                    if (!REVERSE) {
-                        // TODO: insert small delay here to prevent flashing lights
-                        // when rapidly switching from N to P (through R).
-                        right_off();
-                        left_on();
-                    } else if (REVERSE){
-                        right_on();
-                        left_off();
-                    }
+    // Let's light up the lamps!
+    if (LIGHTS && VSS < 80 ){
+        if (int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD)){
+            failsafeDelayRunning = false;   // turn off failsafeDelay because we
+                                            // just moved to a working state
+            if (WHEELS_DIR == true){ // wheels are turned right
+                if (!REVERSE) {
+                    // TODO: insert small delay here to prevent flashing lights
+                    // when rapidly switching from N to P (through R).
+                    right_on();
+                    left_off();
+                } else if (REVERSE){
+                    // or should this small delay ^
+                    // go here (too)?
+                    right_off();
+                    left_on();
                 }
-            } else if (int(SW_ANGLE) < int(SW_ANGLE_THRESHOLD)){ // steering wheel angle lower than threshold
-                right_off();
-                left_off();
+            } else if (WHEELS_DIR == false){ // wheels are turned left
+                if (!REVERSE) {
+                    right_off();
+                    left_on();
+                } else if (REVERSE){
+                    right_on();
+                    left_off();
+                }
             }
-        }
-        else { // if Low Beam is off then disable bending lights
+        } else if (int(SW_ANGLE) < int(SW_ANGLE_THRESHOLD)){ // steering wheel angle lower than threshold
             right_off();
             left_off();
         }
-/*
-        if (!LIGHTS && (SW_ANGLE < SW_ANGLE_THRESHOLD)){ // second time for failsafe operation?
-            right_off();
-            left_off();
+    }
+    else { // if Low Beam is off or the speed is higher then disable bending lights
+        right_off();
+        left_off();
+    }
+
+    if (SW_ANGLE < SW_ANGLE_THRESHOLD) { // failsafe
+        if (!failsafeDelayRunning) {
+            failsafeDelayStart = millis(); // start delay
+            failsafeDelayRunning = true;
         }
-*/
-    } // end CAN receive
+        failsafePassedTime = millis() - failsafeDelayStart;
+        if (failsafeDelayRunning && ( failsafePassedTime >= failsafeDelayLength)) {
+            failsafeDelayRunning = false;
+            failsafePassedTime = 0;
+            digitalWrite(left_pin, LOW);
+            digitalWrite(right_pin, LOW);
+        }
+        //right_off();
+        //left_off();
+    }
 
 }
