@@ -18,6 +18,7 @@ int failsafeDelayLength = 2000;
 static byte rightBrightness = 0;
 static byte leftBrightness = 0;
 
+// right delays
 static unsigned long rightOffDelayStart = 0;
 static unsigned long rightOffPassedTime = 0;
 static bool rightOffDelayRunning = false;
@@ -26,7 +27,7 @@ static unsigned long rightOnDelayStart = 0;
 static unsigned long rightOnPassedTime = 0;
 static bool rightOnDelayRunning = false;
 
-
+// left delays
 static unsigned long leftOffDelayStart = 0;
 static unsigned long leftOffPassedTime = 0;
 static bool leftOffDelayRunning = false;
@@ -35,6 +36,7 @@ static unsigned long leftOnDelayStart = 0;
 static unsigned long leftOnPassedTime = 0;
 static bool leftOnDelayRunning = false;
 
+// failsafe delay
 static unsigned long failsafeDelayStart = 0;
 static unsigned long failsafePassedTime = 0;
 static bool failsafeDelayRunning = false;
@@ -43,15 +45,17 @@ static bool failsafeDelayRunning = false;
 const int SPI_CS_PIN = 9;
 MCP_CAN CAN(SPI_CS_PIN); // Set CS pin used for CAN bus shield
 unsigned int canId;
+unsigned char len = 0;
+unsigned char buf[8];
 
 static byte tmp_byte;           // temporary variable for bit grab
 static short swAngleMessage;    // where to assemble Steering Wheel angle from 14-bit message
 static short SW_ANGLE;          // final steering wheel angle value   
 
 static short vssMessage;    // where to assemble Vehicle Speed from 16-bit message
-static short VSS;           // final Vehicle Speed value
+static short VSS = 0;       // Vehicle Speed value
 
-static bool WHEELS_DIR; // Where wheels are pointed to, 0=left, 1=right
+static bool WHEELS_DIR = false; // Where wheels are pointed to, 0=left, 1=right
 static bool REVERSE = false; // Reverse gear engaged
 static bool LIGHTS = false; // Low beam headlights are on
 
@@ -62,8 +66,6 @@ LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
 boolean enableLCD = false;
 
 // PWM fade-in functions
-
-// direction-specific functions
 void left_on() {
     byte my_pin = left_pin;
     if (!left_is_on){
@@ -78,10 +80,10 @@ void left_on() {
         analogWrite(my_pin, leftBrightness);
 
         if (leftOnDelayRunning && ( leftOnPassedTime >= onDelayLength)) {
-            left_is_on = true;
+            digitalWrite(my_pin, HIGH);
             leftOnDelayRunning = false;
             leftOnPassedTime = 0;
-            digitalWrite(my_pin, HIGH);
+            left_is_on = true;
         }
     }
 }
@@ -100,17 +102,15 @@ void right_on() {
         analogWrite(my_pin, rightBrightness);
 
         if (rightOnDelayRunning && ( rightOnPassedTime >= onDelayLength)) {
-            right_is_on = true;
+            digitalWrite(my_pin, HIGH);
             rightOnDelayRunning = false;
             rightOnPassedTime = 0;
-            digitalWrite(my_pin, HIGH);
+            right_is_on = true;
         }
     }
 }
 
 // PWM fade-out functions
-
-// direction-specific functions
 void left_off() {
     byte my_pin = left_pin;
     if (left_is_on){
@@ -125,10 +125,10 @@ void left_off() {
         analogWrite(my_pin, leftBrightness);
 
         if (leftOffDelayRunning && ( leftOffPassedTime >= offDelayLength)) {
-            left_is_on = false;
+            digitalWrite(my_pin, LOW);
             leftOffDelayRunning = false;
             leftOffPassedTime = 0;
-            digitalWrite(my_pin, LOW);
+            left_is_on = false;
         }
     }
 }
@@ -147,10 +147,10 @@ void right_off() {
         analogWrite(my_pin, rightBrightness);
 
         if (rightOffDelayRunning && ( rightOffPassedTime >= offDelayLength)) {
-            right_is_on = false;
+            digitalWrite(my_pin, LOW);
             rightOffDelayRunning = false;
             rightOffPassedTime = 0;
-            digitalWrite(my_pin, LOW);
+            right_is_on = false;
         }
     }
 }
@@ -171,8 +171,7 @@ void setup() {
         lcd.backlight();
     }
 
-    while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz)) // init CAN bus, make sure you select correct bus speed -- 125 kbit/s for MS-CAN
-    {
+    while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz)) {// init CAN bus, make sure you select correct bus speed -- 125 kbit/s for MS-CAN
         if(enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init FAILED"); }
     }
     if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); lcd.setCursor(0, 1); lcd.print(String(round(onDelayLength/255.0)+1));lcd.print("|"); lcd.print(String(round(offDelayLength/255.0))); }
@@ -188,7 +187,7 @@ void setup() {
      *  and the filter tells it how those bits should be set (or unset).
      *  See https://forum.arduino.cc/index.php?topic=156069.0 for explanation.
      *
-     *  In this particular case, I want to configure Mask to include both
+     *  In this particular case, I want to configure Mask to include the following
      *  ID 0x433 and ID 0x480 and ID 0x08b. I look at their binary form:
      *  0x433:  10000110011
      *  0x480:  10010000000
@@ -214,11 +213,8 @@ void setup() {
 
 void loop() {
     // receive CAN messages
-    unsigned char len = 0;
-    unsigned char buf[8];
     if(CAN_MSGAVAIL == CAN.checkReceive()) { // check if data coming
         CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
-        //unsigned long canId = CAN.getCanId();
         canId = CAN.getCanId();
     } // end CAN receive
 
@@ -242,6 +238,7 @@ void loop() {
     }
 
     // Debug via LCD
+/*
     if(enableLCD){
         // print angle
         lcd.setCursor(0, 0);
@@ -273,7 +270,7 @@ void loop() {
         }
         lcd.print("                ");
     }
-
+*/
     // Let's light up the lamps!
     if (LIGHTS && VSS < 80 ){
         if (int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD)){
@@ -304,8 +301,7 @@ void loop() {
             right_off();
             left_off();
         }
-    }
-    else { // if Low Beam is off or the speed is higher then disable bending lights
+    } else { // if Low Beam is off or the speed is higher then disable bending lights
         right_off();
         left_off();
     }
@@ -317,13 +313,11 @@ void loop() {
         }
         failsafePassedTime = millis() - failsafeDelayStart;
         if (failsafeDelayRunning && ( failsafePassedTime >= failsafeDelayLength)) {
-            failsafeDelayRunning = false;
-            failsafePassedTime = 0;
             digitalWrite(left_pin, LOW);
             digitalWrite(right_pin, LOW);
+            failsafePassedTime = 0;
+            failsafeDelayRunning = false;
         }
-        //right_off();
-        //left_off();
     }
 
 }
