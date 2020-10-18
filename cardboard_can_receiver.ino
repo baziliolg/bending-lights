@@ -64,11 +64,12 @@ static bool LIGHTS = false; // Low beam headlights are on
 #include <LCD_1602_RUS_ALL.h>
 LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
 boolean enableLCD = false;
+boolean enableSerial = false;
 
 // PWM fade-in functions
 void left_on() {
     byte my_pin = left_pin;
-    if (!left_is_on){
+    if (!left_is_on) {
         if (!leftOnDelayRunning) {
             leftOnDelayStart = millis(); // start delay
             leftOnDelayRunning = true;
@@ -81,10 +82,18 @@ void left_on() {
 
         if (leftOnDelayRunning && ( leftOnPassedTime >= onDelayLength)) {
             digitalWrite(my_pin, HIGH);
+            leftBrightness = 255; // just for Serial debug clarity
             leftOnDelayRunning = false;
             leftOnPassedTime = 0;
             left_is_on = true;
         }
+    }
+    // If I turn the steering wheel back over SW_ANGLE_THRESHOLD while
+    // off-delay is still running, this code ensures that the lamp is
+    // not left in half-brightness state but is reignited fully.
+    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && left_is_on && leftOffDelayRunning && !WHEELS_DIR && !REVERSE) {
+            leftOffDelayRunning = false;
+            left_off();
     }
 }
 
@@ -103,17 +112,25 @@ void right_on() {
 
         if (rightOnDelayRunning && ( rightOnPassedTime >= onDelayLength)) {
             digitalWrite(my_pin, HIGH);
+            rightBrightness = 255; // just for Serial debug clarity
             rightOnDelayRunning = false;
             rightOnPassedTime = 0;
             right_is_on = true;
         }
+    }
+    // If I turn the steering wheel back over SW_ANGLE_THRESHOLD while
+    // off-delay is still running, this code ensures that the lamp is
+    // not left in half-brightness state but is reignited fully.
+    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && right_is_on && rightOffDelayRunning && WHEELS_DIR && !REVERSE) {
+            rightOffDelayRunning = false;
+            right_off();
     }
 }
 
 // PWM fade-out functions
 void left_off() {
     byte my_pin = left_pin;
-    if (left_is_on){
+    if (left_is_on) {
         if (!leftOffDelayRunning) {
             leftOffDelayStart = millis(); // start delay
             leftOffDelayRunning = true;
@@ -124,18 +141,25 @@ void left_off() {
         leftBrightness = (offDelayLength - leftOffPassedTime)/round(offDelayLength/255.0);
         analogWrite(my_pin, leftBrightness);
 
-        if (leftOffDelayRunning && ( leftOffPassedTime >= offDelayLength)) {
+        if (leftOffDelayRunning && (leftOffPassedTime >= offDelayLength)) {
             digitalWrite(my_pin, LOW);
+            leftBrightness = 0; // just for Serial debug clarity
             leftOffDelayRunning = false;
             leftOffPassedTime = 0;
             left_is_on = false;
         }
     }
+    // If I turn the steering wheel back over SW_ANGLE_THRESHOLD while
+    // off-delay is still running, this code ensures that leftOffDelayRunning
+    // is stopped.
+    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && left_is_on && leftOffDelayRunning && !WHEELS_DIR && !REVERSE){
+        leftOffDelayRunning = false;
+    }
 }
 
 void right_off() {
     byte my_pin = right_pin;
-    if (right_is_on){
+    if (right_is_on) {
         if (!rightOffDelayRunning) {
             rightOffDelayStart = millis(); // start delay
             rightOffDelayRunning = true;
@@ -148,10 +172,17 @@ void right_off() {
 
         if (rightOffDelayRunning && ( rightOffPassedTime >= offDelayLength)) {
             digitalWrite(my_pin, LOW);
+            rightBrightness = 0; // just for Serial debug clarity
             rightOffDelayRunning = false;
             rightOffPassedTime = 0;
             right_is_on = false;
         }
+    }
+    // If I turn the steering wheel back over SW_ANGLE_THRESHOLD while
+    // off-delay is still running, this code ensures that rightOffDelayRunning
+    // is stopped.
+    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && right_is_on && rightOffDelayRunning && WHEELS_DIR && !REVERSE){
+        rightOffDelayRunning = false;
     }
 }
 
@@ -169,6 +200,9 @@ void setup() {
         // LCD display will be used for debugging
         lcd.init();
         lcd.backlight();
+    }
+    if (enableSerial) {
+        Serial.begin(9600);
     }
 
     while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz)) {// init CAN bus, make sure you select correct bus speed -- 125 kbit/s for MS-CAN
@@ -271,6 +305,30 @@ void loop() {
         lcd.print("                ");
     }
 */
+    // debug via Serial
+/*
+    if (enableSerial) {
+        Serial.print("SW_ANGLE ");Serial.print(SW_ANGLE, DEC);
+        if (!WHEELS_DIR) {
+            Serial.print("L");
+        } else if (WHEELS_DIR) {
+            Serial.print("R");
+        }
+        Serial.print(" | L_ON ");Serial.print(left_is_on, BIN);
+        Serial.print(" | L_BRT ");Serial.print(leftBrightness, DEC);
+        Serial.print(" | LOnDR ");Serial.print(leftOnDelayRunning,BIN);
+        Serial.print(" | LOffDR ");Serial.print(leftOffDelayRunning,BIN);
+        Serial.print(" | R_ON ");Serial.print(right_is_on, BIN);
+        Serial.print(" | R_BRT ");Serial.print(rightBrightness, DEC);
+        Serial.print(" | ROnDR ");Serial.print(rightOnDelayRunning,BIN);
+        Serial.print(" | ROffDR ");Serial.print(rightOffDelayRunning,BIN);
+        if (REVERSE) {
+            Serial.print(" | REVERSE");
+        }
+        Serial.print("\n");
+    }
+*/
+
     // Let's light up the lamps!
     if (LIGHTS && VSS < 80 ){
         if (int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD)){
