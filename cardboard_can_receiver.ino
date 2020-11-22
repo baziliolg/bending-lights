@@ -8,6 +8,7 @@ static bool left_is_on = false;
 static bool right_is_on = false;
 
 const short SW_ANGLE_THRESHOLD = 40; // Bending light ON if SW_ANGLE > this
+const short SW_ANGLE_OFF_THRESHOLD = 20; // Bending light OFF if SW_ANGLE < this
 
 // PWM fade related vars.
 // Looks ugly, I know.
@@ -59,11 +60,6 @@ static bool WHEELS_DIR = false; // Where wheels are pointed to, 0=left, 1=right
 static bool REVERSE = false;    // Reverse gear engaged
 static bool LIGHTS = false;     // Low beam headlights are on
 
-// enable LCD (for debugging)
-#define _LCD_TYPE 1
-#include <LCD_1602_RUS_ALL.h>
-LCD_1602_RUS <LiquidCrystal_I2C> lcd(0x27, 16, 2);
-boolean enableLCD = false;
 boolean enableSerial = false;
 
 // PWM fade-in functions
@@ -93,7 +89,7 @@ void left_on() {
     // off-delay is still running, this code ensures that the lamp is
     // not left in half-brightness state but is reignited fully.
     if (!REVERSE) { left_dir_flag = !WHEELS_DIR; } else if (REVERSE) { left_dir_flag = WHEELS_DIR; }
-    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && left_is_on && leftOffDelayRunning && left_dir_flag) {
+    if ((SW_ANGLE > SW_ANGLE_OFF_THRESHOLD) && left_is_on && leftOffDelayRunning && left_dir_flag) {
             leftOffDelayRunning = false;
             left_off();
     }
@@ -125,7 +121,7 @@ void right_on() {
     // off-delay is still running, this code ensures that the lamp is
     // not left in half-brightness state but is reignited fully.
     if (!REVERSE) { right_dir_flag = WHEELS_DIR; } else if (REVERSE) { right_dir_flag = !WHEELS_DIR; }
-    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && right_is_on && rightOffDelayRunning && right_dir_flag) {
+    if ((SW_ANGLE > SW_ANGLE_OFF_THRESHOLD) && right_is_on && rightOffDelayRunning && right_dir_flag) {
             rightOffDelayRunning = false;
             right_off();
     }
@@ -158,7 +154,7 @@ void left_off() {
     // off-delay is still running, this code ensures that leftOffDelayRunning
     // is stopped.
     if (!REVERSE) { left_dir_flag = !WHEELS_DIR; } else if (REVERSE) { left_dir_flag = WHEELS_DIR; }
-    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && left_is_on && leftOffDelayRunning && left_dir_flag) {
+    if ((SW_ANGLE > SW_ANGLE_OFF_THRESHOLD) && left_is_on && leftOffDelayRunning && left_dir_flag) {
         if (LIGHTS) { leftOffDelayRunning = false; } // disable Off Delay only if lighs are on.
         // otherwise the device does not react to Low Beam Off
     }
@@ -197,8 +193,9 @@ void right_off() {
     // off-delay is still running, this code ensures that rightOffDelayRunning
     // is stopped.
     if (!REVERSE) { right_dir_flag = WHEELS_DIR; } else if (REVERSE) { right_dir_flag = !WHEELS_DIR; }
-    if ((SW_ANGLE > SW_ANGLE_THRESHOLD) && right_is_on && rightOffDelayRunning && right_dir_flag) {
-        if (LIGHTS){ rightOffDelayRunning = false; }
+    if ((SW_ANGLE > SW_ANGLE_OFF_THRESHOLD) && right_is_on && rightOffDelayRunning && right_dir_flag) {
+        if (LIGHTS){ rightOffDelayRunning = false; } // disable Off Delay only if lighs are on.
+        // otherwise the device does not react to Low Beam Off
     }
     // interrupt On Delay
     if (rightOnDelayRunning) {
@@ -218,19 +215,13 @@ void setup() {
     digitalWrite(right_pin, LOW);
     digitalWrite(left_pin, LOW);
 
-    if(enableLCD){
-        // LCD display will be used for debugging
-        lcd.init();
-        lcd.backlight();
-    }
     if (enableSerial) {
         Serial.begin(19200);
     }
 
     while (CAN_OK != CAN.begin(CAN_125KBPS, MCP_8MHz)) {// init CAN bus, make sure you select correct bus speed -- 125 kbit/s for MS-CAN
-        if(enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init FAILED"); }
+        if(enableSerial){ Serial.print("CAN init FAILED"); }
     }
-    if (enableLCD){ lcd.setCursor(0, 0); lcd.print("CAN init OK"); lcd.setCursor(0, 1); lcd.print(String(round(onDelayLength/255.0)+1));lcd.print("|"); lcd.print(String(round(offDelayLength/255.0))); }
 
     /*  Now I'll try to init CAN message masks and filters
      *  INFO: https://copperhilltech.com/content/MCP2515.pdf
@@ -293,42 +284,8 @@ void loop() {
             break;
     }
 
-    // Debug via LCD
 /*
-    if(enableLCD){
-        // print angle
-        lcd.setCursor(0, 0);
-        lcd.print(String(SW_ANGLE));
-        lcd.print("°");
-        if (SW_ANGLE < 10){
-            lcd.print("  ");
-        } else if (SW_ANGLE < 100){
-            lcd.print(" ");
-        }
-        
-        lcd.print("|VSS:");
-        lcd.print(String(VSS));
-        lcd.print("                ");
-
-        // print wheels direction
-        lcd.setCursor(0, 1);
-        lcd.print("WH:");
-        if (WHEELS_DIR == true){
-            lcd.print("R");
-        } else if (WHEELS_DIR == false) {
-            lcd.print("L");
-        }
-        if (LIGHTS){
-            lcd.print("|LB"); // "Low Beam"
-        }
-        if (REVERSE){
-            lcd.print("|REV"); // Reverse gear engaged
-        }
-        lcd.print("                ");
-    }
-*/
     // debug via Serial
-/*
     if (enableSerial) {
         Serial.print("SW_ANGLE ");Serial.print(SW_ANGLE, DEC);
         if (SW_ANGLE < 10){ Serial.print("  "); } else if (SW_ANGLE < 100){ Serial.print(" "); }
@@ -342,7 +299,7 @@ void loop() {
         if (leftBrightness < 10){ Serial.print("  "); } else if (leftBrightness < 100){ Serial.print(" "); }
         Serial.print(" | LOnDR ");Serial.print(leftOnDelayRunning,BIN);
         Serial.print(" | LOffDR ");Serial.print(leftOffDelayRunning,BIN);
-        Serial.print(" | R_ON ");Serial.print(right_is_on, BIN);
+        Serial.print(" || R_ON ");Serial.print(right_is_on, BIN);
         Serial.print(" | R_BRI ");Serial.print(rightBrightness, DEC);
         if (rightBrightness < 10){ Serial.print("  "); } else if (rightBrightness < 100){ Serial.print(" "); }
         Serial.print(" | ROnDR ");Serial.print(rightOnDelayRunning,BIN);
@@ -354,18 +311,15 @@ void loop() {
 */
     // Let's light up the lamps!
     if (LIGHTS && VSS < 80 ){
-        if (int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD)){
-            failsafeDelayRunning = false;   // turn off failsafeDelay because we
-                                            // just moved to a working state
+        if ( int(SW_ANGLE) > int(SW_ANGLE_THRESHOLD) || (int(SW_ANGLE) > int(SW_ANGLE_OFF_THRESHOLD) && (rightOffDelayRunning || leftOffDelayRunning) ) ){
+            // initial ON when SW_ANGLE over SW_ANGLE_THRESHOLD,
+            // but if any OffDelay is running then ON over lower SW_ANGLE_OFF_THRESHOLD
+            failsafeDelayRunning = false;   // turn off failsafeDelay because we just moved to a working state
             if (WHEELS_DIR == true){ // wheels are turned right
                 if (!REVERSE) {
-                    // TODO: insert small delay here to prevent flashing lights
-                    // when rapidly switching from N to P (through R).
                     right_on();
                     left_off();
                 } else if (REVERSE){
-                    // or should this small delay ^
-                    // go here (too)?
                     right_off();
                     left_on();
                 }
@@ -378,7 +332,7 @@ void loop() {
                     left_off();
                 }
             }
-        } else if (int(SW_ANGLE) < int(SW_ANGLE_THRESHOLD)){ // steering wheel angle lower than threshold
+        } else if (int(SW_ANGLE) < int(SW_ANGLE_OFF_THRESHOLD)){ // steering wheel angle lower than off threshold
             right_off();
             left_off();
         }
@@ -387,7 +341,7 @@ void loop() {
         left_off();
     }
 
-    if (SW_ANGLE < SW_ANGLE_THRESHOLD) { // call failsafe lights off
+    if (SW_ANGLE < SW_ANGLE_OFF_THRESHOLD) { // call failsafe lights off if steering wheel close to center
         if (!failsafeDelayRunning) {
             failsafeDelayStart = millis(); // start delay
             failsafeDelayRunning = true;
